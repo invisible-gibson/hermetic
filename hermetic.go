@@ -11,38 +11,31 @@
 package hermetic
 
 // Seal scrambles subject with cipher and returns a new sealed slice.
-// If cipher is empty, the result is a copy of subject unchanged.
+// If cipher is empty, the result is a copy of subject unchanged — this is
+// deliberate (not an error): a missing/blank secret is treated as a no-op.
 func Seal(cipher, subject []byte) []byte {
-	return scramble(seal, cipher, subject)
+	return scramble(true, cipher, subject)
 }
 
 // Unseal reverses a Seal with the same cipher and returns a new slice.
 // If cipher is empty, the result is a copy of subject unchanged.
 func Unseal(cipher, subject []byte) []byte {
-	return scramble(unseal, cipher, subject)
+	return scramble(false, cipher, subject)
 }
 
-type sealerFN func(byte) byte
-
-func seal(b byte) byte {
-	return b - 128
-}
-
-func unseal(b byte) byte {
-	return 128 - b
-}
-
-func scramble(fn sealerFN, cipher, subject []byte) []byte {
+func scramble(seal bool, cipher, subject []byte) []byte {
 	out := make([]byte, len(subject))
 	copy(out, subject)
 	if len(cipher) == 0 {
 		return out
 	}
-	for i, ix := 0, 0; i < len(out); i, ix = i+1, ix+1 {
-		if ix == len(cipher) {
-			ix = 0
+	for i := 0; i < len(out); i++ {
+		d := cipher[i%len(cipher)] - 128
+		if seal {
+			out[i] += d
+		} else {
+			out[i] -= d
 		}
-		out[i] = out[i] + fn(cipher[ix])
 	}
 	return out
 }

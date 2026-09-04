@@ -111,11 +111,7 @@ func TestUnsealThenSeal(t *testing.T) {
 func TestKnownGoldenVector(t *testing.T) {
 	cipher := []byte{1, 2, 3}
 	subject := []byte{10, 20, 30, 40}
-	// out[i] = subject[i] + (cipher[i%len(cipher)] - 128) under uint8 wrap
-	wantSealed := make([]byte, len(subject))
-	for i, b := range subject {
-		wantSealed[i] = b + (cipher[i%len(cipher)] - 128)
-	}
+	wantSealed := []byte{139, 150, 161, 169}
 	got := Seal(cipher, subject)
 	if !bytes.Equal(got, wantSealed) {
 		t.Fatalf("golden Seal: got %v want %v", got, wantSealed)
@@ -126,10 +122,63 @@ func TestKnownGoldenVector(t *testing.T) {
 }
 
 func TestDifferentCiphersDoNotRoundTrip(t *testing.T) {
-	subject := []byte("payload")
-	sealed := Seal([]byte("alpha-key"), subject)
-	wrong := Unseal([]byte("omega-key"), sealed)
-	if bytes.Equal(wrong, subject) {
-		t.Fatal("different cipher should not recover plaintext")
+	cases := []struct {
+		name    string
+		cipher  []byte
+		subject []byte
+		sealed  []byte
+	}{
+		{
+			name:    "alpha over payload",
+			cipher:  []byte("alpha-key"),
+			subject: []byte("payload"),
+			sealed:  []byte{81, 77, 105, 84, 80, 14, 79},
+		},
+		{
+			name:    "short cipher vs long subject",
+			cipher:  []byte{1, 2},
+			subject: []byte{10, 20, 30, 40},
+			sealed:  []byte{139, 150, 159, 170},
+		},
+		{
+			name:    "binary cipher",
+			cipher:  []byte{0x00, 0xff},
+			subject: []byte{0x10, 0x20, 0x30},
+			sealed:  []byte{0x90, 0x9f, 0xb0},
+		},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Seal(tc.cipher, tc.subject)
+			if !bytes.Equal(got, tc.sealed) {
+				t.Fatalf("Seal: got %v want %v", got, tc.sealed)
+			}
+			if !bytes.Equal(Unseal(tc.cipher, got), tc.subject) {
+				t.Fatal("same-cipher Unseal failed")
+			}
+			wrongCipher := append([]byte(nil), tc.cipher...)
+			if len(wrongCipher) > 0 {
+				wrongCipher[0] ^= 0xff
+			} else {
+				wrongCipher = []byte{0x42}
+			}
+			wrong := Unseal(wrongCipher, got)
+			if bytes.Equal(wrong, tc.subject) {
+				t.Fatal("different cipher should not recover plaintext")
+			}
+		})
+	}
+}
+
+func FuzzRoundTrip(f *testing.F) {
+	f.Add([]byte("cipher"), []byte("subject"))
+	f.Add([]byte{1, 2, 3}, []byte{10, 20, 30, 40})
+	f.Add([]byte{}, []byte("plain"))
+	f.Add([]byte("k"), []byte{})
+	f.Fuzz(func(t *testing.T, cipher, subject []byte) {
+		got := Unseal(cipher, Seal(cipher, subject))
+		if !bytes.Equal(got, subject) {
+			t.Fatalf("round-trip failed: cipher=%v subject=%v got=%v", cipher, subject, got)
+		}
+	})
 }
